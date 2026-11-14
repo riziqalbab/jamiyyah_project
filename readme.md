@@ -373,6 +373,7 @@ Melatih model menggunakan pasangan *(Pertanyaan Bahasa Indonesia, Referensi Baha
 | Arabic Processing | PyArabic |
 | Schema Validation | Pydantic, Zod |
 | Data Format | JSONL |
+| Dataset Hosting | Hugging Face Hub (`datasets`) |
 | Database | PostgreSQL |
 | Vector Search | pgvector / Qdrant |
 | Sparse Search | pg_search / BM25 |
@@ -420,6 +421,46 @@ jamiyyah_project/
 ```
 
 > **Kebijakan Penyimpanan Dataset:** File dataset mentah dan hasil parsing berukuran besar (`datasets/unparsed/` dan `datasets/parsed/`) **tidak** disimpan di GitHub karena batas ukuran file/LFS serta pertimbangan hak cipta literatur. Hanya sample kecil (`datasets/samples/`) yang di-track di Git untuk keperluan pengujian dan kontribusi.
+
+### Dataset Distribution (Hugging Face Hub)
+
+Distribusi dataset penuh (`datasets/parsed/` dan opsional backup private `datasets/unparsed/`) dikelola melalui **Hugging Face Hub** agar tidak terkena batas ukuran file GitHub sekaligus terintegrasi langsung dengan pipeline Python (`datasets` / `huggingface_hub`).
+
+- **Repo Parsed (`jamiyyah-corpus`):** Menyimpan file `.jsonl` sesuai Canonical Schema (disarankan **Private** selama status kurasi masih `pending` atau izin distribusi sumber masih diverifikasi).
+- **Repo Raw (`jamiyyah-raw`, Private):** Backup sumber mentah (`unparsed/`) seperti `.csv`, `.bok`, atau PDF.
+
+**Install CLI & Login:**
+
+```bash
+pip install -U huggingface_hub
+hf auth login
+```
+
+**Upload Dataset:**
+
+```bash
+# Upload hasil parsing JSONL ke Hugging Face Dataset Hub
+hf upload <username>/jamiyyah-corpus datasets/parsed/ parsed/ \
+  --repo-type dataset \
+  --exclude ".gitkeep" --exclude ".DS_Store"
+```
+
+**Download Dataset:**
+
+```bash
+# Tarik dataset ke folder lokal datasets/
+hf download <username>/jamiyyah-corpus \
+  --repo-type dataset \
+  --local-dir datasets/
+```
+
+**Load Langsung di Python:**
+
+```python
+from datasets import load_dataset
+
+ds = load_dataset("<username>/jamiyyah-corpus", data_files="parsed/hadist/hadits.jsonl")
+```
 
 ---
 
