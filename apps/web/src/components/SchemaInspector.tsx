@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { triggerRagIndex } from "../api";
-import type { HealthResponse, JamiyyahChunk } from "../types";
+import { fetchRagIndexStatus, triggerRagIndex } from "../api";
+import type { HealthResponse, JamiyyahChunk, RagIndexJobStatus } from "../types";
 
 interface SchemaInspectorProps {
   health: HealthResponse | null;
@@ -18,14 +18,45 @@ export function SchemaInspector({
   onRefreshHealth,
 }: SchemaInspectorProps) {
   const [chunkIdInput, setChunkIdInput] = useState(chunk?.chunk_id ?? "");
-  const [indexing, setIndexing] = useState(false);
-  const [indexMessage, setIndexMessage] = useState<string | null>(null);
+  const [includeHadith, setIncludeHadith] = useState(false);
+  const [job, setJob] = useState<RagIndexJobStatus | null>(health?.rag?.index_job ?? null);
+  const [triggerError, setTriggerError] = useState<string | null>(null);
 
   useEffect(() => {
     if (chunk?.chunk_id) {
       setChunkIdInput(chunk.chunk_id);
     }
   }, [chunk?.chunk_id]);
+
+  useEffect(() => {
+    if (health?.rag?.index_job && !job) {
+      setJob(health.rag.index_job);
+    }
+  }, [health?.rag?.index_job, job]);
+
+  useEffect(() => {
+    if (!job?.running) return;
+    let active = true;
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await fetchRagIndexStatus();
+        if (!active) return;
+        setJob(next);
+        if (!next.running) {
+          onRefreshHealth?.();
+        }
+      } catch (err) {
+        if (active) {
+          setTriggerError(err instanceof Error ? err.message : "Gagal memeriksa progres");
+        }
+      }
+    }, 500);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [job?.running, onRefreshHealth]);
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -36,25 +67,21 @@ export function SchemaInspector({
   }
 
   async function handleIndexClick() {
-    setIndexing(true);
-    setIndexMessage(null);
+    setTriggerError(null);
     try {
-      const res = await triggerRagIndex(false);
-      setIndexMessage(
-        `Selesai: ${res.embedded} baru di-embed, ${res.skipped_unchanged} dilewati, total ${res.total_in_store} vektor di ${res.backend}.`
-      );
-      onRefreshHealth?.();
+      const started = await triggerRagIndex(includeHadith);
+      setJob(started);
     } catch (err) {
-      setIndexMessage(
-        `Gagal indexing: ${err instanceof Error ? err.message : "Error tidak diketahui"}`
+      setTriggerError(
+        err instanceof Error ? err.message : "Gagal memulai proses indexing"
       );
-    } finally {
-      setIndexing(false);
     }
   }
 
   const rag = health?.rag;
   const pg = rag?.pgvector;
+  const showProgress = job && job.state !== "idle";
+  const pct = job ? Math.max(0, Math.min(100, job.percent)) : 0;
 
   return (
     <section className="tab-panel active" id="panel-inspector" role="tabpanel">
@@ -78,7 +105,7 @@ export function SchemaInspector({
                     {" · "}
                     {pg.connected
                       ? pg.schema_ready
-                        ? `terhubung (${pg.count} vektor)`
+                        ? `terhubung (${pg.count.toLocaleString("id-ID")} vektor)`
                         : "terhubung (tabel belum dibuat)"
                       : `offline (${pg.error ?? "cek PostgreSQL"})`}
                   </span>
@@ -86,7 +113,8 @@ export function SchemaInspector({
               </div>
               <div>
                 <strong>Embedding:</strong> <code>{rag.embedding_model}</code> @{" "}
-                <code>{rag.embedding_base_url}</code> ({rag.indexed_vectors} terindeks)
+                <code>{rag.embedding_base_url}</code> (
+                {rag.indexed_vectors.toLocaleString("id-ID")} terindeks)
               </div>
               <div>
                 <strong>Cloud LLM:</strong> <code>{rag.llm_model}</code> @{" "}
@@ -95,18 +123,73 @@ export function SchemaInspector({
                   {rag.llm_configured ? "LLM_API_KEY aktif" : "LLM_API_KEY belum diset (fallback)"}
                 </strong>
               </div>
+
               <div className="rag-index-actions">
+                <label className="toggle-chip">
+                  <input
+                    type="checkbox"
+                    checked={includeHadith}
+                    disabled={Boolean(job?.running)}
+                    onChange={(e) => setIncludeHadith(e.target.checked)}
+                  />
+                  <span>
+                    Sertakan <code>hadits.jsonl</code> (38.100 entri)
+                  </span>
+                </label>
+
                 <button
                   type="button"
                   className="btn-secondary"
-                  disabled={indexing}
+                  disabled={Boolean(job?.running)}
                   onClick={() => void handleIndexClick()}
                 >
-                  {indexing
-                    ? "Mengindeks ke pgvector..."
+                  {job?.running
+                    ? `Mengindeks (${pct.toFixed(1)}%)...`
+                    : includeHadith
+                    ? "Indeks Semua (Kitab + Hadits) ke pgvector"
                     : "Indeks Kitab Turats ke pgvector (Ollama)"}
                 </button>
-                {indexMessage && <div className="rag-index-msg">{indexMessage}</div>}
+
+                {showProgress && job && (
+                  <div className="index-progress-card" role="status" aria-live="polite">
+                    <div className="index-progress-head">
+                      <span>
+                        {job.state === "running"
+                          ? `Memproses ${job.current_file || "..."}`
+                          : job.state === "done"
+                          ? "Indexing selesai"
+                          : "Indexing gagal"}
+                      </span>
+                      <strong>{pct.toFixed(1)}%</strong>
+                    </div>
+                    <div
+                      className="progress-track"
+                      role="progressbar"
+                      aria-valuenow={Math.round(pct)}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                    >
+                      <div
+                        className={`progress-fill ${job.state}`}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <div className="index-progress-stats">
+                      <span>
+                        Dipindai: {job.scanned.toLocaleString("id-ID")} /{" "}
+                        {job.total.toLocaleString("id-ID")}
+                      </span>
+                      <span>Baru: {job.embedded.toLocaleString("id-ID")}</span>
+                      <span>Dilewati: {job.skipped_unchanged.toLocaleString("id-ID")}</span>
+                      {job.state === "done" && (
+                        <span>Total di pgvector: {job.total_in_store.toLocaleString("id-ID")}</span>
+                      )}
+                    </div>
+                    {job.error && <div className="rag-index-err">{job.error}</div>}
+                  </div>
+                )}
+
+                {triggerError && <div className="rag-index-err">{triggerError}</div>}
               </div>
             </div>
           )}

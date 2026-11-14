@@ -1,10 +1,11 @@
-"""Batch incremental vector indexer for Jamiyyah Canonical JSONL corpora."""
+"""Batch incremental vector indexer with live progress callbacks for Jamiyyah corpora."""
 
 from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Iterable, Sequence
+import sys
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,18 @@ class IndexStats:
     total_in_store: int
 
 
+@dataclass(frozen=True)
+class IndexProgress:
+    """Incremental progress snapshot emitted during ``index_jsonl_files``."""
+
+    total: int
+    scanned: int
+    embedded: int
+    skipped_unchanged: int
+    current_file: str
+    percent: float
+
+
 def _chunk_embedding_text(rec: dict[str, Any]) -> str:
     content = rec.get("content") or {}
     emb = (content.get("embedding_text") or "").strip()
@@ -46,6 +59,25 @@ def _chunk_embedding_text(rec: dict[str, Any]) -> str:
     return f"Hierarki: {hier} | Konteks: {indo} | Ibarat: {ar}".strip()
 
 
+def count_jsonl_records(
+    jsonl_paths: Sequence[Path],
+    *,
+    max_chunks: int | None = None,
+) -> int:
+    """Count total non-empty JSONL lines across ``jsonl_paths`` for progress percentage."""
+    total = 0
+    for path in jsonl_paths:
+        if not path.is_file():
+            continue
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    total += 1
+                    if max_chunks is not None and total >= max_chunks:
+                        return total
+    return total
+
+
 def index_jsonl_files(
     jsonl_paths: Sequence[Path],
     *,
@@ -54,12 +86,32 @@ def index_jsonl_files(
     model: str,
     batch_size: int = 16,
     max_chunks: int | None = None,
+    progress_callback: Callable[[IndexProgress], None] | None = None,
 ) -> IndexStats:
     """Incrementally embed canonical JSONL chunks into ``store``."""
+    total = count_jsonl_records(jsonl_paths, max_chunks=max_chunks)
     existing = store.existing_hashes(model)
     scanned = 0
     embedded = 0
     skipped = 0
+    current_file = ""
+
+    def emit(force: bool = False) -> None:
+        if progress_callback is None:
+            return
+        if not force and scanned % 200 != 0:
+            return
+        pct = round((scanned / total) * 100.0, 1) if total > 0 else 100.0
+        progress_callback(
+            IndexProgress(
+                total=total,
+                scanned=scanned,
+                embedded=embedded,
+                skipped_unchanged=skipped,
+                current_file=current_file,
+                percent=min(100.0, pct),
+            )
+        )
 
     pending: list[tuple[dict[str, Any], str, str]] = []
 
@@ -85,6 +137,7 @@ def index_jsonl_files(
         ]
         embedded += store.upsert_many(records)
         pending.clear()
+        emit(force=True)
 
     def iter_records(path: Path) -> Iterable[dict[str, Any]]:
         with path.open("r", encoding="utf-8") as handle:
@@ -93,9 +146,12 @@ def index_jsonl_files(
                 if raw:
                     yield json.loads(raw)
 
+    emit(force=True)
     for path in jsonl_paths:
         if not path.is_file():
             continue
+        current_file = path.name
+        emit(force=True)
         for rec in iter_records(path):
             if max_chunks is not None and scanned >= max_chunks:
                 break
@@ -104,6 +160,7 @@ def index_jsonl_files(
             chash = content_sha256(text)
             if existing.get(rec["chunk_id"]) == chash:
                 skipped += 1
+                emit(force=False)
                 continue
             pending.append((rec, text, chash))
             if len(pending) >= batch_size:
@@ -112,6 +169,7 @@ def index_jsonl_files(
             break
 
     flush_batch()
+    emit(force=True)
     return IndexStats(
         scanned=scanned,
         embedded=embedded,
@@ -130,6 +188,21 @@ def default_dataset_paths(repo_root: Path, include_hadith: bool = False) -> list
     if include_hadith:
         paths.append(repo_root / "datasets" / "parsed" / "hadist" / "hadits.jsonl")
     return paths
+
+
+def _render_cli_progress(progress: IndexProgress) -> None:
+    width = 28
+    filled = int((progress.percent / 100.0) * width) if progress.total > 0 else width
+    bar = "█" * filled + "░" * (width - filled)
+    msg = (
+        f"\r[{bar}] {progress.percent:5.1f}% "
+        f"({progress.scanned}/{progress.total}) "
+        f"embedded={progress.embedded} skipped={progress.skipped_unchanged}"
+    )
+    if progress.current_file:
+        msg += f" [{progress.current_file}]"
+    sys.stdout.write(msg)
+    sys.stdout.flush()
 
 
 def main() -> None:
@@ -174,7 +247,9 @@ def main() -> None:
         model=settings.embedding_model,
         batch_size=args.batch_size,
         max_chunks=args.max_chunks,
+        progress_callback=_render_cli_progress,
     )
+    print()
     print(
         f"Done: scanned={stats.scanned}, newly_embedded={stats.embedded}, "
         f"skipped={stats.skipped_unchanged}, total_indexed={stats.total_in_store}"

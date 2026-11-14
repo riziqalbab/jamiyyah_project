@@ -25,6 +25,7 @@ from jamiyyah_rag.guardrails import (
     validate_citations,
 )
 from jamiyyah_rag.indexer import (
+    IndexProgress,
     create_vector_store,
     default_dataset_paths,
     index_jsonl_files,
@@ -192,6 +193,89 @@ class CorpusIndex:
         self.loaded_files: list[str] = []
         self.hadith_loading = False
         self.hadith_loaded = False
+        self._index_lock = threading.Lock()
+        self.index_job: dict[str, Any] = {
+            "running": False,
+            "state": "idle",
+            "include_hadith": False,
+            "total": 0,
+            "scanned": 0,
+            "embedded": 0,
+            "skipped_unchanged": 0,
+            "percent": 0.0,
+            "current_file": "",
+            "total_in_store": 0,
+            "error": None,
+        }
+
+    def get_index_job_status(self) -> dict[str, Any]:
+        with self._index_lock:
+            return dict(self.index_job)
+
+    def start_vector_indexing(self, include_hadith: bool = False) -> dict[str, Any]:
+        with self._index_lock:
+            if self.index_job["running"]:
+                return dict(self.index_job)
+            self.index_job = {
+                "running": True,
+                "state": "running",
+                "include_hadith": include_hadith,
+                "total": 0,
+                "scanned": 0,
+                "embedded": 0,
+                "skipped_unchanged": 0,
+                "percent": 0.0,
+                "current_file": "Menyiapkan...",
+                "total_in_store": 0,
+                "error": None,
+            }
+
+        def _on_progress(prog: IndexProgress) -> None:
+            with self._index_lock:
+                self.index_job.update({
+                    "total": prog.total,
+                    "scanned": prog.scanned,
+                    "embedded": prog.embedded,
+                    "skipped_unchanged": prog.skipped_unchanged,
+                    "percent": prog.percent,
+                    "current_file": prog.current_file,
+                })
+
+        def _run() -> None:
+            try:
+                if isinstance(self.vector_store, PgVectorStore):
+                    self.vector_store.ensure_schema()
+                paths = default_dataset_paths(self.repo_root, include_hadith=include_hadith)
+                stats = index_jsonl_files(
+                    paths,
+                    store=self.vector_store,
+                    embed_client=self.embed_client,
+                    model=self.settings.embedding_model,
+                    progress_callback=_on_progress,
+                )
+                with self._index_lock:
+                    self.index_job.update({
+                        "running": False,
+                        "state": "done",
+                        "total": stats.scanned,
+                        "scanned": stats.scanned,
+                        "embedded": stats.embedded,
+                        "skipped_unchanged": stats.skipped_unchanged,
+                        "percent": 100.0,
+                        "total_in_store": stats.total_in_store,
+                        "current_file": "",
+                        "error": None,
+                    })
+            except (OpenAICompatError, psycopg.Error, OSError, RuntimeError, ValueError) as exc:
+                with self._index_lock:
+                    self.index_job.update({
+                        "running": False,
+                        "state": "error",
+                        "error": str(exc),
+                    })
+
+        threading.Thread(target=_run, daemon=True).start()
+        return self.get_index_job_status()
 
     def _tokenize_id(self, text: str) -> list[str]:
         tokens = _TOKEN_RE.findall(text.lower())
@@ -348,6 +432,7 @@ class CorpusIndex:
                     "llm_base_url": self.settings.llm_base_url,
                     "llm_configured": self.llm_client is not None,
                     "min_reranker_score": self.settings.min_reranker_score,
+                    "index_job": self.get_index_job_status(),
                 },
             }
 
@@ -827,6 +912,10 @@ def make_handler(corpus: CorpusIndex, web_dir: Path) -> type[BaseHTTPRequestHand
                 self._send_json(corpus.stats())
                 return
 
+            if path == "/api/rag/index/status":
+                self._send_json(corpus.get_index_job_status())
+                return
+
             if path == "/api/books":
                 self._send_json({"books": corpus.list_books()})
                 return
@@ -874,27 +963,8 @@ def make_handler(corpus: CorpusIndex, web_dir: Path) -> type[BaseHTTPRequestHand
 
             if parsed.path == "/api/rag/index":
                 include_hadith = bool(body.get("include_hadith", False))
-                try:
-                    if isinstance(corpus.vector_store, PgVectorStore):
-                        corpus.vector_store.ensure_schema()
-                    paths = default_dataset_paths(corpus.repo_root, include_hadith=include_hadith)
-                    idx_stats = index_jsonl_files(
-                        paths,
-                        store=corpus.vector_store,
-                        embed_client=corpus.embed_client,
-                        model=corpus.settings.embedding_model,
-                    )
-                    self._send_json({
-                        "status": "ok",
-                        "backend": corpus.settings.vector_backend,
-                        "model": corpus.settings.embedding_model,
-                        "scanned": idx_stats.scanned,
-                        "embedded": idx_stats.embedded,
-                        "skipped_unchanged": idx_stats.skipped_unchanged,
-                        "total_in_store": idx_stats.total_in_store,
-                    })
-                except (OpenAICompatError, psycopg.Error, OSError, RuntimeError, ValueError) as exc:
-                    self._send_json({"error": str(exc)}, HTTPStatus.BAD_GATEWAY)
+                job = corpus.start_vector_indexing(include_hadith=include_hadith)
+                self._send_json(job, HTTPStatus.ACCEPTED)
                 return
 
             if parsed.path != "/api/ask":

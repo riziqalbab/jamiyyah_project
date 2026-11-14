@@ -3,6 +3,7 @@ import type {
   BookSummary,
   HealthResponse,
   JamiyyahChunk,
+  RagIndexJobStatus,
   SearchResponse,
 } from "./types";
 
@@ -57,18 +58,14 @@ export function askQuestion(payload: {
   });
 }
 
-export function triggerRagIndex(includeHadith = false): Promise<{
-  status: string;
-  backend: string;
-  model: string;
-  scanned: number;
-  embedded: number;
-  skipped_unchanged: number;
-  total_in_store: number;
-}> {
-  return apiJson("/api/rag/index", {
+export function triggerRagIndex(includeHadith = false): Promise<RagIndexJobStatus> {
+  return apiJson<RagIndexJobStatus>("/api/rag/index", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ include_hadith: includeHadith }),
   });
+}
+
+export function fetchRagIndexStatus(): Promise<RagIndexJobStatus> {
+  return apiJson<RagIndexJobStatus>("/api/rag/index/status");
 }

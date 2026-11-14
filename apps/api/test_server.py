@@ -142,3 +142,41 @@ def test_hybrid_dense_and_cloud_llm_grounded_qa() -> None:
         assert res["retrieval_mode"] == "hybrid_dense_bm25"
         assert res["rag_mode"] == "llm_grounded"
         assert "bm_pwnu_jatim_2023_012_c01" in res["layer3_validation"]["cited_ids"]
+
+
+def test_async_vector_indexing_job_progress(tmp_path: Path) -> None:
+    import time
+
+    repo_root = Path(__file__).resolve().parents[2]
+    store = SqliteVectorStore(tmp_path / "async.sqlite")
+    embed_client = OpenAICompatClient(
+        "http://localhost:11434/v1",
+        transport=lambda _u, p, _h, _t: {
+            "data": [{"index": i, "embedding": [1.0, 0.0]} for i, _ in enumerate(p["input"])]
+        },
+    )
+    settings = RagSettings(
+        vector_backend="sqlite",
+        embedding_model="embeddinggemma-2:440m",
+        llm_api_key="",
+    )
+    idx = CorpusIndex(
+        repo_root,
+        settings=settings,
+        embed_client=embed_client,
+        vector_store=store,
+    )
+    job = idx.start_vector_indexing(include_hadith=False)
+    assert job["state"] in {"running", "done"}
+
+    deadline = time.time() + 10.0
+    while time.time() < deadline:
+        status = idx.get_index_job_status()
+        if not status["running"]:
+            break
+        time.sleep(0.05)
+
+    final_status = idx.get_index_job_status()
+    assert final_status["state"] == "done"
+    assert final_status["percent"] == 100.0
+    assert final_status["total_in_store"] >= 378

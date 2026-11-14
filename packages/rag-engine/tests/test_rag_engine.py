@@ -241,9 +241,19 @@ class TestRagEngine(unittest.TestCase):
                     "data": [{"index": i, "embedding": [1.0, 0.0]} for i, _ in enumerate(p["input"])]
                 },
             )
-            st1 = index_jsonl_files([jsonl], store=store, embed_client=embed_client, model="m")
+            snapshots = []
+            st1 = index_jsonl_files(
+                [jsonl],
+                store=store,
+                embed_client=embed_client,
+                model="m",
+                progress_callback=snapshots.append,
+            )
             self.assertEqual(st1.embedded, 1)
             self.assertEqual(st1.skipped_unchanged, 0)
+            self.assertTrue(snapshots)
+            self.assertEqual(snapshots[-1].percent, 100.0)
+            self.assertEqual(snapshots[-1].total, 1)
             st2 = index_jsonl_files([jsonl], store=store, embed_client=embed_client, model="m")
             self.assertEqual(st2.embedded, 0)
             self.assertEqual(st2.skipped_unchanged, 1)

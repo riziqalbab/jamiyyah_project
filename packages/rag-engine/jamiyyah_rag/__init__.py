@@ -10,6 +10,7 @@ from jamiyyah_rag.guardrails import (
     validate_citations,
 )
 from jamiyyah_rag.indexer import (
+    IndexProgress,
     IndexStats,
     create_vector_store,
     default_dataset_paths,
@@ -30,6 +31,7 @@ __all__ = [
     "CitationValidationResult",
     "GroundedGenerationResult",
     "GroundingConfig",
+    "IndexProgress",
     "IndexStats",
     "OpenAICompatClient",
     "OpenAICompatError",

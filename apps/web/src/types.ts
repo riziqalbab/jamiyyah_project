@@ -9,6 +9,20 @@ export interface PgVectorStatus {
   error?: string;
 }
 
+export interface RagIndexJobStatus {
+  running: boolean;
+  state: "idle" | "running" | "done" | "error";
+  include_hadith: boolean;
+  total: number;
+  scanned: number;
+  embedded: number;
+  skipped_unchanged: number;
+  percent: number;
+  current_file: string;
+  total_in_store: number;
+  error: string | null;
+}
+
 export interface RagRuntimeInfo {
   vector_backend: string;
   pgvector: PgVectorStatus | null;
@@ -19,6 +33,7 @@ export interface RagRuntimeInfo {
   llm_base_url: string;
   llm_configured: boolean;
   min_reranker_score: number;
+  index_job?: RagIndexJobStatus;
 }
 
 export interface HealthResponse {
