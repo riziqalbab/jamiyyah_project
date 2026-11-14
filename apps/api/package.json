@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "REST / tRPC API service for Jamiyyah Project (NestJS / Next.js backend).",
+  "scripts": {
+    "start": "PYTHONPATH=../../packages/schema:../../packages/normalizer:../../packages/parsers:../../packages/rag-engine ../../.venv/bin/python server.py"
+  },
   "dependencies": {
     "@jamiyyah/schema": "workspace:*"
   }

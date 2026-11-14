@@ -9,6 +9,9 @@
     "apps/*"
   ],
   "scripts": {
+    "build:web": "bun run -b --cwd apps/web build",
+    "dev:web": "bun run -b --cwd apps/web dev",
+    "dev:ui": "PYTHONPATH=packages/schema:packages/normalizer:packages/parsers:packages/rag-engine .venv/bin/python apps/api/server.py --port 8765",
     "test:py": "PYTHONPATH=packages/schema:packages/normalizer:packages/parsers:packages/rag-engine sh -c 'for dir in packages/*/tests; do python3 -m unittest discover -s \"$dir\" -p \"test_*.py\" -v || exit 1; done'",
     "validate:samples": "PYTHONPATH=packages/schema python3 -m jamiyyah_schema datasets/samples/canonical_sample.jsonl"
   }
