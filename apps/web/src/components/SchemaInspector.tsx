@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { triggerRagIndex } from "../api";
 import type { HealthResponse, JamiyyahChunk } from "../types";
 
 interface SchemaInspectorProps {
@@ -6,6 +7,7 @@ interface SchemaInspectorProps {
   chunk: JamiyyahChunk | null;
   chunkError: string | null;
   onLoadChunk: (chunkId: string) => void;
+  onRefreshHealth?: () => void;
 }
 
 export function SchemaInspector({
@@ -13,8 +15,11 @@ export function SchemaInspector({
   chunk,
   chunkError,
   onLoadChunk,
+  onRefreshHealth,
 }: SchemaInspectorProps) {
   const [chunkIdInput, setChunkIdInput] = useState(chunk?.chunk_id ?? "");
+  const [indexing, setIndexing] = useState(false);
+  const [indexMessage, setIndexMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (chunk?.chunk_id) {
@@ -30,16 +35,81 @@ export function SchemaInspector({
     }
   }
 
+  async function handleIndexClick() {
+    setIndexing(true);
+    setIndexMessage(null);
+    try {
+      const res = await triggerRagIndex(false);
+      setIndexMessage(
+        `Selesai: ${res.embedded} baru di-embed, ${res.skipped_unchanged} dilewati, total ${res.total_in_store} vektor di ${res.backend}.`
+      );
+      onRefreshHealth?.();
+    } catch (err) {
+      setIndexMessage(
+        `Gagal indexing: ${err instanceof Error ? err.message : "Error tidak diketahui"}`
+      );
+    } finally {
+      setIndexing(false);
+    }
+  }
+
+  const rag = health?.rag;
+  const pg = rag?.pgvector;
+
   return (
     <section className="tab-panel active" id="panel-inspector" role="tabpanel">
       <div className="inspector-grid">
         <div className="card">
           <div className="panel-header">
             <div>
-              <h3>Statistik Korpus Aktif</h3>
-              <p className="panel-subtitle">Distribusi kategori sumber &amp; status verifikasi</p>
+              <h3>Statistik Korpus &amp; Status RAG</h3>
+              <p className="panel-subtitle">
+                Konfigurasi pgvector, Ollama Embeddings, &amp; Cloud OpenAI-Compatible LLM
+              </p>
             </div>
           </div>
+
+          {rag && (
+            <div className="rag-status-box">
+              <div>
+                <strong>Vector Store:</strong> <code>{rag.vector_backend}</code>
+                {pg && (
+                  <span>
+                    {" · "}
+                    {pg.connected
+                      ? pg.schema_ready
+                        ? `terhubung (${pg.count} vektor)`
+                        : "terhubung (tabel belum dibuat)"
+                      : `offline (${pg.error ?? "cek PostgreSQL"})`}
+                  </span>
+                )}
+              </div>
+              <div>
+                <strong>Embedding:</strong> <code>{rag.embedding_model}</code> @{" "}
+                <code>{rag.embedding_base_url}</code> ({rag.indexed_vectors} terindeks)
+              </div>
+              <div>
+                <strong>Cloud LLM:</strong> <code>{rag.llm_model}</code> @{" "}
+                <code>{rag.llm_base_url}</code> —{" "}
+                <strong>
+                  {rag.llm_configured ? "LLM_API_KEY aktif" : "LLM_API_KEY belum diset (fallback)"}
+                </strong>
+              </div>
+              <div className="rag-index-actions">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={indexing}
+                  onClick={() => void handleIndexClick()}
+                >
+                  {indexing
+                    ? "Mengindeks ke pgvector..."
+                    : "Indeks Kitab Turats ke pgvector (Ollama)"}
+                </button>
+                {indexMessage && <div className="rag-index-msg">{indexMessage}</div>}
+              </div>
+            </div>
+          )}
 
           <div className="stats-grid">
             <div className="stat-tile">

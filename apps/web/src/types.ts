@@ -2,6 +2,25 @@ import type { JamiyyahChunk } from "@jamiyyah/schema";
 
 export type { JamiyyahChunk };
 
+export interface PgVectorStatus {
+  connected: boolean;
+  schema_ready: boolean;
+  count: number;
+  error?: string;
+}
+
+export interface RagRuntimeInfo {
+  vector_backend: string;
+  pgvector: PgVectorStatus | null;
+  embedding_model: string;
+  embedding_base_url: string;
+  indexed_vectors: number;
+  llm_model: string;
+  llm_base_url: string;
+  llm_configured: boolean;
+  min_reranker_score: number;
+}
+
 export interface HealthResponse {
   total_chunks: number;
   by_category: Record<string, number>;
@@ -10,6 +29,7 @@ export interface HealthResponse {
   loaded_files: string[];
   hadith_loading: boolean;
   hadith_loaded: boolean;
+  rag?: RagRuntimeInfo;
 }
 
 export interface BookChapterItem {
@@ -44,11 +64,13 @@ export interface SearchHit {
   rrf_score: number;
   bm25_id: number;
   bm25_ar: number;
+  dense_cosine?: number;
   rerank_score: number;
 }
 
 export interface SearchResponse {
   expansion: QueryExpansion;
+  retrieval_mode?: string;
   hits: SearchHit[];
 }
 
@@ -56,6 +78,10 @@ export interface AskResponse {
   status: "answered" | "tawaqquf";
   query: string;
   expansion: QueryExpansion;
+  retrieval_mode?: string;
+  rag_mode?: string;
+  llm_model?: string;
+  llm_error?: string | null;
   threshold: number;
   grounding_config: {
     temperature: number;
@@ -77,4 +103,22 @@ export interface AskResponse {
   sources: SearchHit[];
 }
 
-export type ActiveTab = "qa" | "maktabah" | "inspector";
+export type ActiveTab = "chat" | "maktabah" | "inspector";
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: number;
+  category?: string;
+  askResult?: AskResponse;
+  error?: string;
+}
+
+export interface ChatThread {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: ChatMessage[];
+}

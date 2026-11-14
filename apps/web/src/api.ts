@@ -56,3 +56,19 @@ export function askQuestion(payload: {
     body: JSON.stringify(payload),
   });
 }
+
+export function triggerRagIndex(includeHadith = false): Promise<{
+  status: string;
+  backend: string;
+  model: string;
+  scanned: number;
+  embedded: number;
+  skipped_unchanged: number;
+  total_in_store: number;
+}> {
+  return apiJson("/api/rag/index", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ include_hadith: includeHadith }),
+  });
+}

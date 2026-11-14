@@ -16,12 +16,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+import psycopg
 from jamiyyah_normalizer import normalize_arabic
+from jamiyyah_rag.config import RagSettings
 from jamiyyah_rag.guardrails import (
     GroundingConfig,
     evaluate_retrieval_gate,
     validate_citations,
 )
+from jamiyyah_rag.indexer import (
+    create_vector_store,
+    default_dataset_paths,
+    index_jsonl_files,
+)
+from jamiyyah_rag.openai_compat import OpenAICompatClient, OpenAICompatError
+from jamiyyah_rag.pgvector_store import PgVectorStore, VectorStore
+from jamiyyah_rag.pipeline import expand_query_with_llm, generate_strict_grounded_answer
 from jamiyyah_rag.retrieval import RankedItem, reciprocal_rank_fusion
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -144,10 +154,34 @@ class ChunkPointer:
 
 
 class CorpusIndex:
-    """In-memory hybrid BM25 index over disk-backed Canonical JSONL datasets."""
+    """In-memory hybrid BM25 + pgvector Dense Vector index over Canonical JSONL datasets."""
 
-    def __init__(self, repo_root: Path) -> None:
+    def __init__(
+        self,
+        repo_root: Path,
+        *,
+        settings: RagSettings | None = None,
+        embed_client: OpenAICompatClient | None = None,
+        llm_client: OpenAICompatClient | None = None,
+        vector_store: VectorStore | None = None,
+    ) -> None:
         self.repo_root = repo_root
+        self.settings = settings or RagSettings.from_env(repo_root)
+        self.vector_store = vector_store or create_vector_store(self.settings)
+        self.embed_client = embed_client or OpenAICompatClient(
+            base_url=self.settings.embedding_base_url,
+            api_key=self.settings.embedding_api_key,
+            timeout=self.settings.request_timeout_sec,
+        )
+        self.llm_client = llm_client or (
+            OpenAICompatClient(
+                base_url=self.settings.llm_base_url,
+                api_key=self.settings.llm_api_key,
+                timeout=self.settings.request_timeout_sec,
+            )
+            if self.settings.has_llm_credentials
+            else None
+        )
         self._lock = threading.RLock()
         self.pointers: list[ChunkPointer] = []
         self.id_to_idx: dict[str, int] = {}
@@ -290,6 +324,12 @@ class CorpusIndex:
             by_cat = Counter(p.source_category for p in self.pointers)
             by_status = Counter(p.verification_status for p in self.pointers)
             by_book = Counter(p.book_title for p in self.pointers)
+            vec_count = self.vector_store.count(model=self.settings.embedding_model)
+            pg_status = (
+                self.vector_store.status(model=self.settings.embedding_model)
+                if isinstance(self.vector_store, PgVectorStore)
+                else None
+            )
             return {
                 "total_chunks": len(self.pointers),
                 "by_category": dict(by_cat),
@@ -298,6 +338,17 @@ class CorpusIndex:
                 "loaded_files": list(self.loaded_files),
                 "hadith_loading": self.hadith_loading,
                 "hadith_loaded": self.hadith_loaded,
+                "rag": {
+                    "vector_backend": self.settings.vector_backend,
+                    "pgvector": pg_status,
+                    "embedding_model": self.settings.embedding_model,
+                    "embedding_base_url": self.settings.embedding_base_url,
+                    "indexed_vectors": vec_count,
+                    "llm_model": self.settings.llm_model,
+                    "llm_base_url": self.settings.llm_base_url,
+                    "llm_configured": self.llm_client is not None,
+                    "min_reranker_score": self.settings.min_reranker_score,
+                },
             }
 
     def list_books(self) -> list[dict[str, Any]]:
@@ -409,10 +460,19 @@ class CorpusIndex:
         book_title: str | None = None,
         verification_status: str | None = None,
         limit: int = 12,
+        extra_ar_terms: list[str] | None = None,
     ) -> dict[str, Any]:
         expansion = self.expand_query(query)
         id_terms = expansion["id_terms"]
-        ar_terms = expansion["ar_terms"]
+        ar_terms = list(expansion["ar_terms"])
+        if extra_ar_terms:
+            seen_ar = set(ar_terms)
+            for term in extra_ar_terms:
+                norm_t = normalize_arabic(term)
+                if norm_t and norm_t not in seen_ar:
+                    seen_ar.add(norm_t)
+                    ar_terms.append(norm_t)
+            expansion["ar_terms"] = ar_terms
 
         with self._lock:
             allowed: set[int] | None = None
@@ -435,9 +495,36 @@ class CorpusIndex:
             id_cids = [self.pointers[i].chunk_id for i in id_ranked_idx]
             ar_cids = [self.pointers[i].chunk_id for i in ar_ranked_idx]
 
-        fused = reciprocal_rank_fusion([id_cids, ar_cids], k=60)
+        # Dense Vector Retrieval (Ollama OpenAI-compatible embeddings)
+        dense_cids: list[str] = []
+        dense_scores: dict[str, float] = {}
+        retrieval_mode = "bm25_index_empty"
+        vec_count = self.vector_store.count(model=self.settings.embedding_model)
+        if vec_count > 0:
+            try:
+                q_vecs = self.embed_client.embed([query], model=self.settings.embedding_model)
+                if q_vecs:
+                    vec_hits = self.vector_store.search(
+                        q_vecs[0],
+                        model=self.settings.embedding_model,
+                        limit=60,
+                        category=category,
+                        book_title=book_title,
+                        verification_status=verification_status,
+                    )
+                    dense_cids = [vh.chunk_id for vh in vec_hits if vh.chunk_id in self.id_to_idx]
+                    dense_scores = {vh.chunk_id: vh.cosine for vh in vec_hits}
+                    retrieval_mode = "hybrid_dense_bm25"
+            except OpenAICompatError as exc:
+                retrieval_mode = f"bm25_fallback ({exc})"
+
+        ranked_lists = [id_cids, ar_cids]
+        if dense_cids:
+            ranked_lists.append(dense_cids)
+
+        fused = reciprocal_rank_fusion(ranked_lists, k=60)
         if not fused:
-            return {"expansion": expansion, "hits": []}
+            return {"expansion": expansion, "retrieval_mode": retrieval_mode, "hits": []}
 
         # Compute calibrated relevance score in [0, 1] per candidate
         top_bm25_id = max(id_scores.values(), default=0.0)
@@ -450,8 +537,8 @@ class CorpusIndex:
             idx = self.id_to_idx[chunk_id]
             bm_id = id_scores.get(idx, 0.0)
             bm_ar = ar_scores.get(idx, 0.0)
+            dense_cos = dense_scores.get(chunk_id, 0.0)
 
-            # Term coverage checks for calibrated reranker-like confidence
             rec_id_tokens = set(
                 self._tokenize_id(" ".join([*rec.get("hierarchy", []), rec["content"].get("indonesian", "")]))
             )
@@ -469,22 +556,32 @@ class CorpusIndex:
             norm_id = (bm_id / top_bm25_id) if top_bm25_id > 0 else 0.0
             norm_ar = (bm_ar / top_bm25_ar) if top_bm25_ar > 0 else 0.0
 
-            # Domain + cross-lingual coverage score
-            rerank_score = min(
-                0.98,
-                round(
-                    0.42 * max(id_cov, ar_cov)
-                    + 0.25 * (0.5 * id_cov + 0.5 * ar_cov)
-                    + 0.33 * max(norm_id, norm_ar),
-                    3,
-                ),
+            lexical_score = (
+                0.42 * max(id_cov, ar_cov)
+                + 0.25 * (0.5 * id_cov + 0.5 * ar_cov)
+                + 0.33 * max(norm_id, norm_ar)
             )
-            # Penalize candidates that only matched a single generic token on multi-word queries
+            if dense_cids:
+                blended = 0.55 * dense_cos + 0.45 * lexical_score
+                rerank_score = min(0.98, round(max(lexical_score, blended), 3))
+            else:
+                rerank_score = min(0.98, round(lexical_score, 3))
+
             matched_id_cnt = sum(1 for t in id_terms if t in rec_id_tokens)
             matched_ar_cnt = sum(1 for t in ar_terms if t in rec_ar_tokens)
-            if len(id_terms) >= 2 and matched_id_cnt == 0 and matched_ar_cnt == 0:
+            if (
+                len(id_terms) >= 2
+                and matched_id_cnt == 0
+                and matched_ar_cnt == 0
+                and dense_cos < 0.58
+            ):
                 rerank_score = 0.0
-            elif len(id_terms) >= 3 and matched_id_cnt <= 1 and matched_ar_cnt == 0:
+            elif (
+                len(id_terms) >= 3
+                and matched_id_cnt <= 1
+                and matched_ar_cnt == 0
+                and dense_cos < 0.62
+            ):
                 rerank_score = min(rerank_score, 0.42)
 
             hits.append({
@@ -492,11 +589,12 @@ class CorpusIndex:
                 "rrf_score": round(rrf_score, 5),
                 "bm25_id": round(bm_id, 3),
                 "bm25_ar": round(bm_ar, 3),
+                "dense_cosine": round(dense_cos, 4),
                 "rerank_score": rerank_score,
             })
 
         hits.sort(key=lambda h: (h["rerank_score"], h["rrf_score"]), reverse=True)
-        return {"expansion": expansion, "hits": hits}
+        return {"expansion": expansion, "retrieval_mode": retrieval_mode, "hits": hits}
 
 
 def _has_ar_char(text: str) -> bool:
@@ -511,6 +609,35 @@ def _snippet(text: str, max_len: int = 340) -> str:
     return f"{cut}..."
 
 
+def _extractive_grounded_answer(accepted_hits: list[dict[str, Any]]) -> str:
+    """Deterministic fallback answer compiled strictly from accepted chunks."""
+    lines: list[str] = []
+    primary = accepted_hits[0]["chunk"]
+    primary_hier = " > ".join(primary.get("hierarchy", []))
+    lines.append(
+        f"Berdasarkan rujukan yang terverifikasi pada corpus lokal, pembahasan yang relevan "
+        f"ditemukan dalam **{primary_hier}** [ID: {primary['chunk_id']}]:"
+    )
+    lines.append("")
+    for hit in accepted_hits:
+        ch = hit["chunk"]
+        cid = ch["chunk_id"]
+        label = " > ".join(ch.get("hierarchy", [])[:3])
+        indo = _snippet(ch["content"].get("indonesian") or "", 320)
+        if indo:
+            lines.append(f"- **{label}:** {indo} [ID: {cid}]")
+        else:
+            ar_snip = _snippet(ch["content"].get("arabic_raw", ""), 200)
+            lines.append(f"- **{label}:** {ar_snip} [ID: {cid}]")
+
+    lines.append("")
+    lines.append(
+        "> *Catatan:* Ringkasan di atas disusun dalam mode ekstraktif (*strict grounding*) "
+        "dari potongan kitab/hadits yang lolos ambang batas relevansi."
+    )
+    return "\n".join(lines)
+
+
 def run_grounded_qa(
     corpus: CorpusIndex,
     query: str,
@@ -518,8 +645,22 @@ def run_grounded_qa(
     category: str | None = None,
 ) -> dict[str, Any]:
     """Execute the 3-Layer RAG Guardrails pipeline over local parsed corpora."""
-    search_res = corpus.search(query=query, category=category, limit=6)
+    extra_ar_terms: list[str] = []
+    if corpus.llm_client is not None:
+        extra_ar_terms = expand_query_with_llm(
+            query,
+            corpus.llm_client,
+            model=corpus.settings.llm_model,
+        )
+
+    search_res = corpus.search(
+        query=query,
+        category=category,
+        limit=6,
+        extra_ar_terms=extra_ar_terms,
+    )
     hits = search_res["hits"]
+    retrieval_mode = search_res.get("retrieval_mode", "bm25_index_empty")
 
     candidates = [
         RankedItem(
@@ -541,6 +682,8 @@ def run_grounded_qa(
             "status": "tawaqquf",
             "query": query,
             "expansion": search_res["expansion"],
+            "retrieval_mode": retrieval_mode,
+            "rag_mode": "tawaqquf_gate",
             "threshold": min_score,
             "grounding_config": {
                 "temperature": grounding_cfg.temperature,
@@ -563,35 +706,54 @@ def run_grounded_qa(
 
     accepted_ids = {item.chunk_id for item in gate.accepted_chunks}
     accepted_hits = [h for h in hits if h["chunk"]["chunk_id"] in accepted_ids][:4]
+    accepted_chunks = [h["chunk"] for h in accepted_hits]
 
-    # Layer 2: Strict Grounded Synthesis (structured strictly from retrieved chunks)
-    lines: list[str] = []
-    primary = accepted_hits[0]["chunk"]
-    primary_hier = " > ".join(primary.get("hierarchy", []))
-    lines.append(
-        f"Berdasarkan rujukan yang terverifikasi pada corpus lokal, pembahasan yang relevan "
-        f"ditemukan dalam **{primary_hier}** [ID: {primary['chunk_id']}]:"
-    )
-    lines.append("")
-    for hit in accepted_hits:
-        ch = hit["chunk"]
-        cid = ch["chunk_id"]
-        label = " > ".join(ch.get("hierarchy", [])[:3])
-        indo = _snippet(ch["content"].get("indonesian") or "", 320)
-        if indo:
-            lines.append(f"- **{label}:** {indo} [ID: {cid}]")
-        else:
-            ar_snip = _snippet(ch["content"].get("arabic_raw", ""), 200)
-            lines.append(f"- **{label}:** {ar_snip} [ID: {cid}]")
+    rag_mode = "extractive_fallback"
+    llm_error: str | None = None
 
-    lines.append("")
-    lines.append(
-        "> *Catatan:* Ringkasan di atas disusun secara ketat (*strict grounding*) dari "
-        "potongan kitab/hadits yang lolos ambang batas relevansi tanpa inferensi eksternal."
-    )
-    answer_text = "\n".join(lines)
+    if corpus.llm_client is not None:
+        try:
+            gen = generate_strict_grounded_answer(
+                query,
+                accepted_chunks,
+                corpus.llm_client,
+                model=corpus.settings.llm_model,
+                config=grounding_cfg,
+            )
+            rag_mode = "llm_grounded"
+            return {
+                "status": gen.status,
+                "query": query,
+                "expansion": search_res["expansion"],
+                "retrieval_mode": retrieval_mode,
+                "rag_mode": rag_mode,
+                "llm_model": corpus.settings.llm_model,
+                "threshold": min_score,
+                "grounding_config": {
+                    "temperature": grounding_cfg.temperature,
+                    "require_citations": grounding_cfg.require_citations,
+                    "allow_external_knowledge": grounding_cfg.allow_external_knowledge,
+                },
+                "layer1_gate": {
+                    "passed": True,
+                    "reason": gate.reason,
+                    "accepted_count": len(accepted_hits),
+                    "top_score": accepted_hits[0]["rerank_score"],
+                },
+                "layer3_validation": {
+                    "valid": gen.status == "answered",
+                    "reason": gen.reason,
+                    "cited_ids": gen.cited_ids,
+                    "missing_ids": gen.missing_ids,
+                },
+                "answer": gen.answer,
+                "sources": accepted_hits,
+            }
+        except OpenAICompatError as exc:
+            llm_error = str(exc)
+            rag_mode = "extractive_fallback_llm_error"
 
-    # Layer 3: Citation Validation
+    answer_text = _extractive_grounded_answer(accepted_hits)
     cit_check = validate_citations(
         answer_text,
         allowed_chunk_ids=accepted_ids,
@@ -602,6 +764,9 @@ def run_grounded_qa(
         "status": "answered" if cit_check.valid else "tawaqquf",
         "query": query,
         "expansion": search_res["expansion"],
+        "retrieval_mode": retrieval_mode,
+        "rag_mode": rag_mode,
+        "llm_error": llm_error,
         "threshold": min_score,
         "grounding_config": {
             "temperature": grounding_cfg.temperature,
@@ -699,16 +864,41 @@ def make_handler(corpus: CorpusIndex, web_dir: Path) -> type[BaseHTTPRequestHand
 
         def do_POST(self) -> None:
             parsed = urllib.parse.urlparse(self.path)
-            if parsed.path != "/api/ask":
-                self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
-                return
-
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length) if length > 0 else b"{}"
             try:
                 body = json.loads(raw.decode("utf-8"))
             except json.JSONDecodeError:
                 self._send_json({"error": "Invalid JSON body"}, HTTPStatus.BAD_REQUEST)
+                return
+
+            if parsed.path == "/api/rag/index":
+                include_hadith = bool(body.get("include_hadith", False))
+                try:
+                    if isinstance(corpus.vector_store, PgVectorStore):
+                        corpus.vector_store.ensure_schema()
+                    paths = default_dataset_paths(corpus.repo_root, include_hadith=include_hadith)
+                    idx_stats = index_jsonl_files(
+                        paths,
+                        store=corpus.vector_store,
+                        embed_client=corpus.embed_client,
+                        model=corpus.settings.embedding_model,
+                    )
+                    self._send_json({
+                        "status": "ok",
+                        "backend": corpus.settings.vector_backend,
+                        "model": corpus.settings.embedding_model,
+                        "scanned": idx_stats.scanned,
+                        "embedded": idx_stats.embedded,
+                        "skipped_unchanged": idx_stats.skipped_unchanged,
+                        "total_in_store": idx_stats.total_in_store,
+                    })
+                except (OpenAICompatError, psycopg.Error, OSError, RuntimeError, ValueError) as exc:
+                    self._send_json({"error": str(exc)}, HTTPStatus.BAD_GATEWAY)
+                return
+
+            if parsed.path != "/api/ask":
+                self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
                 return
 
             query = str(body.get("query", "")).strip()

@@ -1,6 +1,9 @@
 [project]
 name = "jamiyyah-rag-engine"
 version = "0.1.0"
-description = "Hybrid retrieval fusion and Three-Layer Guardrails for Jamiyyah Project."
+description = "Hybrid retrieval fusion (pgvector + BM25), Ollama embeddings, and Three-Layer Guardrails for Jamiyyah Project."
 requires-python = ">=3.9"
-dependencies = []
+dependencies = [
+    "pgvector>=0.3.0",
+    "psycopg[binary]>=3.2.0",
+]
