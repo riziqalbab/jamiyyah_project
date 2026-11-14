@@ -1,0 +1,6 @@
+[project]
+name = "jamiyyah-normalizer"
+version = "0.1.0"
+description = "Arabic text normalization and embedding text builder for Jamiyyah Project."
+requires-python = ">=3.9"
+dependencies = ["pyarabic>=0.6.15"]

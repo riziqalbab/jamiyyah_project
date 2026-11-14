@@ -1,0 +1,9 @@
+{
+  "name": "@jamiyyah/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Q&A Interface and Scholarly Reference Explorer for Jamiyyah Project.",
+  "dependencies": {
+    "@jamiyyah/schema": "workspace:*"
+  }
+}

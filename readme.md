@@ -390,33 +390,18 @@ Jamiyyah dirancang agar agnostik terhadap penyedia LLM (OpenAI GPT-4o, Anthropic
 
 ## 6. Repository & Dataset Structure
 
-### Struktur Workspace Saat Ini
-
 ```text
 jamiyyah_project/
-├── code/
-│   └── parsing/             # Eksperimen & script parser (notebook, Python)
-├── datasets/
-│   ├── unparsed/            # Raw dataset lokal (git-ignored, disimpan di storage terpisah)
-│   └── parsed/              # Hasil parsing JSONL lokal (git-ignored)
-├── .gitignore
-└── readme.md
-```
-
-> **Kebijakan Penyimpanan Dataset:** File dataset mentah dan hasil parsing berukuran besar (`datasets/unparsed/` dan `datasets/parsed/`) **tidak** disimpan di GitHub karena batas ukuran file/LFS serta pertimbangan hak cipta literatur. Hanya sample kecil (`datasets/samples/`) yang nantinya di-track di Git untuk keperluan pengujian dan kontribusi.
-
-### Target Monorepo Structure (Planned)
-
-```text
-jamiyyah-project/
 ├── packages/
-│   ├── schema/              # Pydantic & Zod schemas
-│   ├── normalizer/          # Arabic normalization
-│   ├── parsers/             # Shamela, Hadith, Bahtsul Masail parsers
-│   └── rag-engine/          # Query Expansion, Hybrid Search, Reranker, Guardrails & Validator
+│   ├── schema/              # Pydantic & Zod canonical schemas + JSONL validator
+│   ├── normalizer/          # Arabic normalization & embedding_text builder
+│   ├── parsers/             # Hadith CSV, Shamela, Bahtsul Masail parsers
+│   └── rag-engine/          # Hybrid RRF fusion & Three-Layer Guardrails
 ├── apps/
-│   ├── api/                 # REST / tRPC API
-│   └── web/                 # Q&A Interface & Reference Explorer
+│   ├── api/                 # REST / tRPC API (planned)
+│   └── web/                 # Q&A Interface & Reference Explorer (planned)
+├── code/
+│   └── parsing/             # Notebook & eksperimen parsing
 ├── datasets/
 │   ├── samples/             # Sample JSONL datasets (tracked in Git)
 │   ├── unparsed/            # Raw sources (git-ignored / external storage)
@@ -426,10 +411,15 @@ jamiyyah-project/
 │   ├── ARCHITECTURE.md
 │   ├── DATA_GUIDELINES.md
 │   └── EVALUATION.md
+├── .env.example
 ├── .gitignore
 ├── LICENSE
-└── README.md
+├── package.json
+├── pyproject.toml
+└── readme.md
 ```
+
+> **Kebijakan Penyimpanan Dataset:** File dataset mentah dan hasil parsing berukuran besar (`datasets/unparsed/` dan `datasets/parsed/`) **tidak** disimpan di GitHub karena batas ukuran file/LFS serta pertimbangan hak cipta literatur. Hanya sample kecil (`datasets/samples/`) yang di-track di Git untuk keperluan pengujian dan kontribusi.
 
 ---
 

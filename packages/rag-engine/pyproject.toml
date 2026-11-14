@@ -1,0 +1,6 @@
+[project]
+name = "jamiyyah-rag-engine"
+version = "0.1.0"
+description = "Hybrid retrieval fusion and Three-Layer Guardrails for Jamiyyah Project."
+requires-python = ">=3.9"
+dependencies = []

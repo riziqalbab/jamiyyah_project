@@ -1,0 +1,15 @@
+{
+  "name": "jamiyyah-project",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Open-Source Islamic Knowledge Retrieval Engine with Strict Grounding & Verifiable Scholarly References",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test:py": "PYTHONPATH=packages/schema:packages/normalizer:packages/parsers:packages/rag-engine sh -c 'for dir in packages/*/tests; do python3 -m unittest discover -s \"$dir\" -p \"test_*.py\" -v || exit 1; done'",
+    "validate:samples": "PYTHONPATH=packages/schema python3 -m jamiyyah_schema datasets/samples/canonical_sample.jsonl"
+  }
+}

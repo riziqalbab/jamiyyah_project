@@ -1,0 +1,38 @@
+[project]
+name = "jamiyyah-project"
+version = "0.1.0"
+description = "Open-Source Islamic Knowledge Retrieval Engine with Strict Grounding & Verifiable Scholarly References"
+readme = "readme.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = [
+    "pydantic>=2.7.0",
+    "pyarabic>=0.6.15",
+    "pymupdf>=1.24.0",
+    "beautifulsoup4>=4.12.0",
+]
+
+[project.optional-dependencies]
+rag = [
+    "numpy>=1.26.0",
+    "sentence-transformers>=3.0.0",
+    "qdrant-client>=1.9.0",
+    "psycopg[binary]>=3.1.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.6.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.pytest.ini_options]
+pythonpath = [
+    "packages/schema",
+    "packages/normalizer",
+    "packages/parsers",
+    "packages/rag-engine",
+]
+testpaths = ["packages"]

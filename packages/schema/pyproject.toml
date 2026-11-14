@@ -1,0 +1,6 @@
+[project]
+name = "jamiyyah-schema"
+version = "0.1.0"
+description = "Canonical JSONL schema definitions and validators for Jamiyyah Project."
+requires-python = ">=3.9"
+dependencies = ["pydantic>=2.7.0"]

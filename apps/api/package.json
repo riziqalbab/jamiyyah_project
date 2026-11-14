@@ -1,0 +1,9 @@
+{
+  "name": "@jamiyyah/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "REST / tRPC API service for Jamiyyah Project (NestJS / Next.js backend).",
+  "dependencies": {
+    "@jamiyyah/schema": "workspace:*"
+  }
+}
