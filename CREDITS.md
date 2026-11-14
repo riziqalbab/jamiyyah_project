@@ -13,7 +13,8 @@ Daftar berikut mencakup dataset yang saat ini berada di direktori `datasets/` (b
 | Dataset | Lokasi File | Kategori | Jumlah / Ukuran | Status Parsing & Verifikasi | Asal Sumber & Hak Cipta |
 |---|---|---|---|---|---|
 | **Dataset Hadits 9 Imam ("Sunnah")** | `datasets/unparsed/hadist/hadits.csv` → `datasets/parsed/hadist/hadits.jsonl` | `hadith` | 38.100 entri hadits (~71,54 MB CSV / ~188,78 MB JSONL) | Sudah diparsing ke JSONL (`verification_status: pending`) | **Sumber:** [Kaggle — `ronnieaban/sunnah`](https://www.kaggle.com/datasets/ronnieaban/sunnah) oleh **Ronnie Aban** (file asal: `Sunnah.csv`). **Lisensi Kaggle:** ODC Public Domain Dedication and Licence (PDDL) |
-| **Kitab Fathul Qarib** | `datasets/unparsed/kitab_turats/fathul_qarib/fathul_qarib.pdf` | `kitab_turats` | 1 file PDF (380 halaman, ~6,29 MB) | Belum diparsing (`unparsed`) | **Mualif:** Syekh Muhammad bin Qasim Al-Ghazi. **Penerbit versi digital & terjemahan:** Pondok Pesantren Al-Khoirot Malang (`www.alkhoirot.com`). **Distribusi:** Private (perlu izin penerbit versi digital untuk redistribusi publik) |
+| **Kitab Fathul Qarib** | `datasets/unparsed/kitab_turats/fathul_qarib/fathul_qarib.pdf` → `datasets/parsed/kitab_turats/fathul_qarib.jsonl` | `kitab_turats` | 380 halaman PDF (~6,29 MB) + Shamela #35120 | Sudah diparsing ke JSONL (`verification_status: pending`) | **Mualif:** Syekh Muhammad bin Qasim Al-Ghazi. **Penerbit versi digital & terjemahan:** Pondok Pesantren Al-Khoirot Malang (`www.alkhoirot.com`). **Distribusi:** Private (perlu izin penerbit versi digital untuk redistribusi publik) |
+| **Matan al-Ghayah wat-Taqrib** | `datasets/unparsed/kitab_turats/taqrib/taqrib.pdf` → `datasets/parsed/kitab_turats/taqrib.jsonl` | `kitab_turats` | 82 halaman PDF (~461 KB) / 138 chunk | Sudah diparsing ke JSONL (`verification_status: pending`) | **Mualif:** Qadhi Abu Syuja' Ahmad bin Al-Husain Al-Asfahani. **Penerjemah & Penerbit digital:** Suim Wahyudi, S.Pd.I / Konsultasi Agama Al-Khoirot di Facebook (`facebook.com/groups/konsultasiagamaislam`, 2014). **Distribusi:** Private (perlu izin penerjemah/penerbit versi digital untuk redistribusi publik) |
 | **Canonical Schema Sample** | `datasets/samples/canonical_sample.jsonl` | `bahtsul_masail` (ilustrasi) | 1 record contoh | Contoh skema untuk pengujian (`tracked` di Git) | Disusun internal sebagai ilustrasi format *Jamiyyah Canonical Schema* (bukan rujukan hukum aktual) |
 
 ### Rincian Dataset Hadits 9 Imam (`hadits.jsonl`)
@@ -50,6 +51,14 @@ Hasil parsing mencakup **38.100** entri hadits dari 9 kitab (*Kutubut Tis'ah*):
   - `http://www.alkhoirot.org/2012/05/terjemah-kitab-matan-taqrib.html`
 - **Spesifikasi File:** PDF (380 halaman, ~6,29 MB, metadata pembuatan `2018-01-01`).
 - **Status Hak Cipta & Distribusi:** Teks Arab matan/syarah klasik merupakan khazanah *turats*, namun naskah terjemahan Bahasa Indonesia dan kompilasi versi digital merupakan terbitan **Pondok Pesantren Al-Khoirot Malang**. File disimpan secara lokal/`unparsed` (atau repositori **Private**) dan tidak didistribusikan ulang secara publik tanpa izin tertulis penerbit versi digital.
+
+### Rincian Dataset Matan al-Ghayah wat-Taqrib (`taqrib.jsonl`)
+
+- **Judul Lengkap:** *Matan al-Ghayah wat-Taqrib* (*Matan Abi Syuja'* / *Ghayatul Ikhtishar*) — *Terjemahan Taqrib Lengkap*.
+- **Mualif Kitab Asal:** Al-Qadhi Abu Syuja' Ahmad bin Al-Husain bin Ahmad Al-Asfahani.
+- **Penerjemah & Penerbit Versi Digital:** **Suim Wahyudi, S.Pd.I**, 
+- **Spesifikasi File:** PDF (82 halaman, ~461 KB, selesai diterjemahkan `2014-02-10`), diparsing menjadi **138** chunk dwibahasa (*Muqaddimah* + 16 *Kitab*) melalui `packages/parsers/jamiyyah_parsers/taqrib.py`.
+- **Status Kurasi & Distribusi:** `verification_status: pending`. Teks Arab matan klasik merupakan khazanah *turats*, namun naskah terjemahan Bahasa Indonesia dan kompilasi versi digital mengikuti hak cipta penerjemah/penerbitnya (`Private-only` hingga ada izin redistribusi publik).
 
 ---
 
