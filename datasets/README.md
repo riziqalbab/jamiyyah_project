@@ -34,3 +34,5 @@ hf download <username>/jamiyyah-corpus \
 ## Ketentuan Hak Cipta
 
 Pastikan setiap sumber dataset yang ditambahkan ke `unparsed/` maupun `parsed/` memiliki kejelasan asal-usul, atribusi, dan izin distribusi sesuai ketentuan penerbit, lembaga, atau pemegang hak cipta terkait.
+
+Setiap sumber dataset baru beserta atribusi dan lisensinya wajib dicatat di [`CREDITS.md`](../CREDITS.md).

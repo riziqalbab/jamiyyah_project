@@ -414,6 +414,7 @@ jamiyyah_project/
 │   └── EVALUATION.md
 ├── .env.example
 ├── .gitignore
+├── CREDITS.md
 ├── LICENSE
 ├── package.json
 ├── pyproject.toml
@@ -511,7 +512,7 @@ Kode sumber Jamiyyah Project menggunakan **MIT License**.
 
 Namun, lisensi perangkat lunak tidak secara otomatis memberikan hak untuk mendistribusikan seluruh literatur yang digunakan sebagai dataset. Hak cipta dan ketentuan penggunaan atas Kitab Turats, terjemahan, dataset Hadits, kompilasi putusan Bahtsul Masail, fatwa, dan dokumen referensi lainnya tetap mengikuti ketentuan masing-masing *mualif*, penerbit, lembaga, dan pemegang hak terkait.
 
-Setiap kontributor bertanggung jawab memastikan sumber data yang ditambahkan memiliki dasar penggunaan dan distribusi yang sesuai.
+Setiap kontributor bertanggung jawab memastikan sumber data yang ditambahkan memiliki dasar penggunaan dan distribusi yang sesuai. Daftar lengkap sumber dataset, atribusi, serta kredit teknologi & kontributor tercatat di [`CREDITS.md`](CREDITS.md).
 
 ---
 
