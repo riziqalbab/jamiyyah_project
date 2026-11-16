@@ -14,10 +14,15 @@ from jamiyyah_rag import (
     RankedItem,
     SqliteVectorStore,
     VectorRecord,
+    contextualize_and_expand_query,
+    contextualize_query_fallback,
     evaluate_retrieval_gate,
     expand_query_with_llm,
+    generate_conversational_reply,
     generate_strict_grounded_answer,
     index_jsonl_files,
+    is_casual_conversation,
+    normalize_chat_history,
     reciprocal_rank_fusion,
     validate_citations,
 )
@@ -257,6 +262,98 @@ class TestRagEngine(unittest.TestCase):
             st2 = index_jsonl_files([jsonl], store=store, embed_client=embed_client, model="m")
             self.assertEqual(st2.embedded, 0)
             self.assertEqual(st2.skipped_unchanged, 1)
+
+    def test_casual_conversation_detection_and_history_context(self) -> None:
+        self.assertTrue(is_casual_conversation("halo"))
+        self.assertTrue(is_casual_conversation("Halooo Jamiyyah!"))
+        self.assertTrue(is_casual_conversation("Assalamualaikum, apa kabar?"))
+        self.assertTrue(is_casual_conversation("Terima kasih penjelasannya"))
+        self.assertTrue(is_casual_conversation("Siapa kamu?"))
+        self.assertFalse(is_casual_conversation("Halo, apa hukum air dua qullah?"))
+        self.assertFalse(is_casual_conversation("Bagaimana prediksi harga saham teknologi dan kripto besok?"))
+        self.assertFalse(is_casual_conversation("Kalau kurang dari itu bagaimana?", history=[{"role": "user", "content": "Apa ukuran dua qullah?"}]))
+
+        captured_messages: list[list[dict[str, str]]] = []
+
+        def fake_llm(_u: str, payload: dict[str, Any], _h: dict[str, str], _t: float):
+            captured_messages.append(payload["messages"])
+            return {"choices": [{"message": {"content": "Halo Riziq! Ada yang bisa dibantu?"}}]}
+
+        client = OpenAICompatClient("https://api.example.com/v1", "k", transport=fake_llm)
+        history = [
+            {"role": "user", "content": "Halo, nama saya Riziq"},
+            {"role": "assistant", "content": "Halo Riziq! Selamat datang di Jamiyyah."},
+        ]
+        reply, mode, err = generate_conversational_reply("Siapa nama saya?", client, model="m", history=history)
+        self.assertEqual(mode, "conversational")
+        self.assertIsNone(err)
+        self.assertIn("Riziq", reply)
+        self.assertEqual([m["role"] for m in captured_messages[0]], ["system", "user", "assistant", "user"])
+
+        fallback_reply, fallback_mode, _ = generate_conversational_reply("halo", None, model="m")
+        self.assertEqual(fallback_mode, "conversational_fallback")
+        self.assertIn("Jamiyyah", fallback_reply)
+
+    def test_grounded_generation_and_contextualization_receive_history(self) -> None:
+        captured: list[list[dict[str, str]]] = []
+
+        def fake_llm(_u: str, payload: dict[str, Any], _h: dict[str, str], _t: float):
+            captured.append(payload["messages"])
+            sys_msg = payload["messages"][0]["content"]
+            if sys_msg.startswith("Anda membantu ekspansi kueri"):
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": '{"standalone_query": "Hukum air kurang dari dua qullah untuk bersuci", "ar_terms": ["ماء", "قلتين"]}'
+                            }
+                        }
+                    ]
+                }
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "Jika kurang dari dua qullah maka menjadi najis bila terkena najis [ID: c_air_2]."
+                        }
+                    }
+                ]
+            }
+
+        client = OpenAICompatClient("https://api.example.com/v1", "k", transport=fake_llm)
+        history = [
+            {"role": "user", "content": "Apa ukuran air dua qullah?"},
+            {"role": "assistant", "content": "Dua qullah sekitar 500 rithl Baghdadi [ID: c_air_1]."},
+        ]
+
+        effective_q, ar_terms = contextualize_and_expand_query(
+            "Kalau kurang dari itu bagaimana?",
+            client,
+            model="m",
+            history=history,
+        )
+        self.assertEqual(effective_q, "Hukum air kurang dari dua qullah untuk bersuci")
+        self.assertEqual(ar_terms, ["ماء", "قلتين"])
+
+        chunks = [
+            {
+                "chunk_id": "c_air_2",
+                "hierarchy": ["Taqrib", "Thaharah"],
+                "citation": {"full_reference": "Taqrib hlm. 2"},
+                "content": {"arabic_raw": "وإن كان دون القلتين", "indonesian": "Jika kurang dari dua qullah..."},
+            }
+        ]
+        gen = generate_strict_grounded_answer(
+            "Kalau kurang dari itu bagaimana?",
+            chunks,
+            client,
+            model="m",
+            history=history,
+        )
+        self.assertEqual(gen.status, "answered")
+        self.assertEqual([m["role"] for m in captured[-1]], ["system", "user", "assistant", "user"])
+        self.assertIn("qullah", contextualize_query_fallback("Kalau kurang dari itu?", history))
+        self.assertEqual(len(normalize_chat_history(history + [{"role": "system", "content": "ignore"}])), 2)
 
 
 if __name__ == "__main__":

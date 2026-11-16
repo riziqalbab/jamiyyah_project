@@ -89,13 +89,20 @@ export interface SearchResponse {
   hits: SearchHit[];
 }
 
+export interface ChatHistoryTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface AskResponse {
   status: "answered" | "tawaqquf";
   query: string;
+  effective_query?: string;
   expansion: QueryExpansion;
   retrieval_mode?: string;
   rag_mode?: string;
   llm_model?: string;
+  llm_model?: string | null;
   llm_error?: string | null;
   threshold: number;
   grounding_config: {

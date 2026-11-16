@@ -33,6 +33,14 @@ from jamiyyah_rag.indexer import (
 from jamiyyah_rag.openai_compat import OpenAICompatClient, OpenAICompatError
 from jamiyyah_rag.pgvector_store import PgVectorStore, VectorStore
 from jamiyyah_rag.pipeline import expand_query_with_llm, generate_strict_grounded_answer
+from jamiyyah_rag.pipeline import (
+    contextualize_and_expand_query,
+    contextualize_query_fallback,
+    generate_conversational_reply,
+    generate_strict_grounded_answer,
+    is_casual_conversation,
+    normalize_chat_history,
+)
 from jamiyyah_rag.retrieval import RankedItem, reciprocal_rank_fusion
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -728,18 +736,65 @@ def run_grounded_qa(
     query: str,
     min_score: float = 0.65,
     category: str | None = None,
+    history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Execute the 3-Layer RAG Guardrails pipeline over local parsed corpora."""
-    extra_ar_terms: list[str] = []
-    if corpus.llm_client is not None:
-        extra_ar_terms = expand_query_with_llm(
+    """Execute conversational bypass or 3-Layer RAG Guardrails with chat history."""
+    clean_history = normalize_chat_history(history)
+
+    if is_casual_conversation(query, clean_history):
+        answer_text, conv_mode, llm_error = generate_conversational_reply(
             query,
             corpus.llm_client,
             model=corpus.settings.llm_model,
+            history=clean_history,
         )
+        return {
+            "status": "answered",
+            "query": query,
+            "effective_query": query,
+            "expansion": {"id_terms": [], "ar_terms": [], "concepts": []},
+            "retrieval_mode": "conversational_bypass",
+            "rag_mode": conv_mode,
+            "llm_model": corpus.settings.llm_model if conv_mode == "conversational" else None,
+            "llm_error": llm_error,
+            "threshold": min_score,
+            "grounding_config": {
+                "temperature": 0.4,
+                "require_citations": False,
+                "allow_external_knowledge": True,
+            },
+            "layer1_gate": {
+                "passed": True,
+                "reason": "Percakapan biasa: 3-Layer RAG Guardrails dilewati.",
+                "accepted_count": 0,
+                "top_score": 1.0,
+            },
+            "layer3_validation": {
+                "valid": True,
+                "reason": "Bypassed for conversational message.",
+                "cited_ids": [],
+                "missing_ids": [],
+            },
+            "answer": answer_text,
+            "sources": [],
+        }
+
+    extra_ar_terms: list[str] = []
+    if corpus.llm_client is not None:
+        extra_ar_terms = expand_query_with_llm(
+        effective_query, extra_ar_terms = contextualize_and_expand_query(
+            query,
+            corpus.llm_client,
+            model=corpus.settings.llm_model,
+            history=clean_history,
+        )
+    else:
+        effective_query = contextualize_query_fallback(query, clean_history)
 
     search_res = corpus.search(
         query=query,
+        query=effective_query,
         category=category,
         limit=6,
         extra_ar_terms=extra_ar_terms,
@@ -766,6 +821,7 @@ def run_grounded_qa(
         return {
             "status": "tawaqquf",
             "query": query,
+            "effective_query": effective_query,
             "expansion": search_res["expansion"],
             "retrieval_mode": retrieval_mode,
             "rag_mode": "tawaqquf_gate",
@@ -804,11 +860,13 @@ def run_grounded_qa(
                 corpus.llm_client,
                 model=corpus.settings.llm_model,
                 config=grounding_cfg,
+                history=clean_history,
             )
             rag_mode = "llm_grounded"
             return {
                 "status": gen.status,
                 "query": query,
+                "effective_query": effective_query,
                 "expansion": search_res["expansion"],
                 "retrieval_mode": retrieval_mode,
                 "rag_mode": rag_mode,
@@ -848,6 +906,7 @@ def run_grounded_qa(
     return {
         "status": "answered" if cit_check.valid else "tawaqquf",
         "query": query,
+        "effective_query": effective_query,
         "expansion": search_res["expansion"],
         "retrieval_mode": retrieval_mode,
         "rag_mode": rag_mode,
@@ -979,6 +1038,15 @@ def make_handler(corpus: CorpusIndex, web_dir: Path) -> type[BaseHTTPRequestHand
             min_score = float(body.get("min_score", 0.65))
             category = body.get("category") or None
             result = run_grounded_qa(corpus, query=query, min_score=min_score, category=category)
+            raw_history = body.get("history")
+            history = raw_history if isinstance(raw_history, list) else None
+            result = run_grounded_qa(
+                corpus,
+                query=query,
+                min_score=min_score,
+                category=category,
+                history=history,
+            )
             self._send_json(result)
 
     return JamiyyahHandler

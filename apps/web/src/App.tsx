@@ -8,6 +8,7 @@ import { Sidebar } from "./components/Sidebar";
 import type {
   ActiveTab,
   BookSummary,
+  ChatHistoryTurn,
   ChatMessage,
   ChatThread,
   HealthResponse,
@@ -63,6 +64,8 @@ export default function App() {
   const [chunkError, setChunkError] = useState<string | null>(null);
 
   const wasHadithLoading = useRef(false);
+  const threadsRef = useRef(threads);
+  threadsRef.current = threads;
 
   // Ensure activeThreadId always resolves to an existing thread
   useEffect(() => {
@@ -205,6 +208,31 @@ export default function App() {
   const handleSendMessage = useCallback(
     async (query: string, opts: { minScore: number; category: string }) => {
       const targetId = activeThreadId;
+      const existingMessages =
+        threadsRef.current.find((t) => t.id === targetId)?.messages ?? [];
+      const history: ChatHistoryTurn[] = existingMessages
+        .filter((m) => !m.error)
+        .map((m): ChatHistoryTurn | null => {
+          if (m.role === "user") {
+            const text = m.content.trim();
+            return text ? { role: "user", content: text } : null;
+          }
+          const text = m.content.trim();
+          if (text) {
+            return { role: "assistant", content: text };
+          }
+          if (m.askResult?.status === "tawaqquf") {
+            return {
+              role: "assistant",
+              content:
+                "[Tawaqquf: Tidak ditemukan rujukan primer yang melampaui ambang batas pada korpus untuk pertanyaan sebelumnya.]",
+            };
+          }
+          return null;
+        })
+        .filter((item): item is ChatHistoryTurn => item !== null)
+        .slice(-10);
+
       const now = Date.now();
       const userMsg: ChatMessage = {
         id: `msg-${now}-u`,
@@ -238,6 +266,7 @@ export default function App() {
           query,
           min_score: opts.minScore,
           category: opts.category || null,
+          history,
         });
         const botMsg: ChatMessage = {
           id: `msg-${Date.now()}-a`,

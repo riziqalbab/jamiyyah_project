@@ -180,3 +180,91 @@ def test_async_vector_indexing_job_progress(tmp_path: Path) -> None:
     assert final_status["state"] == "done"
     assert final_status["percent"] == 100.0
     assert final_status["total_in_store"] >= 378
+
+
+def test_casual_greeting_bypasses_guardrails_with_and_without_llm(tmp_path: Path) -> None:
+    idx_local = _build_fast_index(tmp_path)
+    res_local = run_grounded_qa(idx_local, query="halo", min_score=0.65)
+    assert res_local["status"] == "answered"
+    assert res_local["rag_mode"] == "conversational_fallback"
+    assert res_local["sources"] == []
+    assert res_local["answer"]
+
+    captured_payloads: list[dict[str, Any]] = []
+
+    def fake_llm(_u: str, payload: dict[str, Any], _h: dict[str, str], _t: float):
+        captured_payloads.append(payload)
+        return {"choices": [{"message": {"content": "Halo juga! Saya masih ingat pertanyaanmu soal dua qullah."}}]}
+
+    repo_root = Path(__file__).resolve().parents[2]
+    settings = RagSettings(
+        vector_backend="sqlite",
+        vector_db_path=tmp_path / "conv.sqlite",
+        llm_model="gpt-4o-mini",
+        llm_api_key="sk-x",
+    )
+    llm_client = OpenAICompatClient("https://api.example.com/v1", "sk-x", transport=fake_llm)
+    idx_llm = CorpusIndex(repo_root, settings=settings, llm_client=llm_client)
+    idx_llm.load_default_datasets(include_hadith=False)
+
+    history = [
+        {"role": "user", "content": "Apa ukuran dua qullah?"},
+        {"role": "assistant", "content": "Dua qullah sekitar 500 rithl [ID: sample_1]."},
+    ]
+    res_llm = run_grounded_qa(idx_llm, query="halo, terima kasih ya", min_score=0.65, history=history)
+    assert res_llm["status"] == "answered"
+    assert res_llm["rag_mode"] == "conversational"
+    assert "ingat" in (res_llm["answer"] or "")
+    assert len(captured_payloads) == 1
+    assert [m["role"] for m in captured_payloads[0]["messages"]] == ["system", "user", "assistant", "user"]
+
+
+def test_followup_rag_uses_history_for_retrieval_and_llm(tmp_path: Path) -> None:
+    captured_llm_messages: list[list[dict[str, str]]] = []
+    repo_root = Path(__file__).resolve().parents[2]
+    settings = RagSettings(
+        vector_backend="sqlite",
+        vector_db_path=tmp_path / "hist.sqlite",
+        llm_model="gpt-4o-mini",
+        llm_api_key="sk-x",
+    )
+    idx = CorpusIndex(repo_root, settings=settings)
+    idx.load_default_datasets(include_hadith=False)
+
+    search_check = idx.search("macam air dua qullah", limit=2)
+    real_cid = search_check["hits"][0]["chunk"]["chunk_id"]
+
+    def fake_llm_with_real_cid(_u: str, payload: dict[str, Any], _h: dict[str, str], _t: float):
+        captured_llm_messages.append(payload["messages"])
+        sys_msg = payload["messages"][0]["content"]
+        if sys_msg.startswith("Anda membantu ekspansi kueri"):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"standalone_query": "Apa saja macam air yang sah untuk bersuci dan ukuran dua qullah?", "ar_terms": ["ماء", "قلتين"]}'
+                        }
+                    }
+                ]
+            }
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": f"Melanjutkan pembahasan sebelumnya, air mutlak ada tujuh macam [ID: {real_cid}]."
+                    }
+                }
+            ]
+        }
+
+    idx.llm_client = OpenAICompatClient("https://api.example.com/v1", "sk-x", transport=fake_llm_with_real_cid)
+    history = [
+        {"role": "user", "content": "Saya ingin belajar bab thaharah."},
+        {"role": "assistant", "content": "Silakan, bab thaharah diawali pembahasan macam-macam air."},
+    ]
+    res = run_grounded_qa(idx, query="Jelaskan ukurannya tadi?", min_score=0.65, history=history)
+    assert res["status"] == "answered"
+    assert res["rag_mode"] == "llm_grounded"
+    assert res["effective_query"] == "Apa saja macam air yang sah untuk bersuci dan ukuran dua qullah?"
+    assert len(captured_llm_messages) == 2
+    assert [m["role"] for m in captured_llm_messages[1]] == ["system", "user", "assistant", "user"]

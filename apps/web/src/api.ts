@@ -1,6 +1,7 @@
 import type {
   AskResponse,
   BookSummary,
+  ChatHistoryTurn,
   HealthResponse,
   JamiyyahChunk,
   RagIndexJobStatus,
@@ -50,6 +51,7 @@ export function askQuestion(payload: {
   query: string;
   min_score: number;
   category: string | null;
+  history?: ChatHistoryTurn[];
 }): Promise<AskResponse> {
   return apiJson<AskResponse>("/api/ask", {
     method: "POST",

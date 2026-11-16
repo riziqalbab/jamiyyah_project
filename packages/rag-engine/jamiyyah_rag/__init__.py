@@ -21,8 +21,13 @@ from jamiyyah_rag.pgvector_store import PgVectorStore, VectorStore
 from jamiyyah_rag.pipeline import (
     GroundedGenerationResult,
     build_rag_context,
+    contextualize_and_expand_query,
+    contextualize_query_fallback,
     expand_query_with_llm,
+    generate_conversational_reply,
     generate_strict_grounded_answer,
+    is_casual_conversation,
+    normalize_chat_history,
 )
 from jamiyyah_rag.retrieval import RankedItem, reciprocal_rank_fusion
 from jamiyyah_rag.vector_store import SqliteVectorStore, VectorHit, VectorRecord
@@ -44,14 +49,19 @@ __all__ = [
     "VectorRecord",
     "VectorStore",
     "build_rag_context",
+    "contextualize_and_expand_query",
+    "contextualize_query_fallback",
     "create_vector_store",
     "default_dataset_paths",
     "evaluate_retrieval_gate",
     "expand_query_with_llm",
     "extract_citation_ids",
+    "generate_conversational_reply",
     "generate_strict_grounded_answer",
     "index_jsonl_files",
+    "is_casual_conversation",
     "load_env_file",
+    "normalize_chat_history",
     "reciprocal_rank_fusion",
     "validate_citations",
 ]

@@ -574,6 +574,12 @@ code {
   color: var(--status-tawaqquf);
 }
 
+.status-pill.conversational {
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
 .telemetry-toggle-btn {
   display: inline-flex;
   align-items: center;

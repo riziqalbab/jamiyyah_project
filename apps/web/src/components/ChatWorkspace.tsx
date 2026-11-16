@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronUp,
   Code2,
+  MessageCircle,
   ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
@@ -275,6 +276,9 @@ export function ChatWorkspace({
                 }
 
                 const res = msg.askResult;
+                const isConversational =
+                  res?.rag_mode === "conversational" ||
+                  res?.rag_mode === "conversational_fallback";
                 const isTelemetryOpen = Boolean(expandedTelemetry[msg.id]);
                 const sources = res?.sources ?? [];
                 const expansionText = res
@@ -302,9 +306,22 @@ export function ChatWorkspace({
                             <span
                               className={`status-pill ${
                                 res.status === "answered" ? "answered" : "tawaqquf"
+                                isConversational
+                                  ? "conversational"
+                                  : res.status === "answered"
+                                  ? "answered"
+                                  : "tawaqquf"
                               }`}
                             >
                               {res.status === "answered" ? (
+                              {isConversational ? (
+                                <>
+                                  <MessageCircle size={13} /> Percakapan ·{" "}
+                                  {res.rag_mode === "conversational"
+                                    ? res.llm_model || "Cloud LLM"
+                                    : "Mode Lokal"}
+                                </>
+                              ) : res.status === "answered" ? (
                                 <>
                                   <ShieldCheck size={13} /> Terverifikasi ·{" "}
                                   {res.rag_mode === "llm_grounded"
@@ -337,9 +354,29 @@ export function ChatWorkspace({
                                 <ChevronDown size={13} />
                               )}
                             </button>
+                            {!isConversational && (
+                              <button
+                                type="button"
+                                className="telemetry-toggle-btn"
+                                onClick={() =>
+                                  setExpandedTelemetry((prev) => ({
+                                    ...prev,
+                                    [msg.id]: !prev[msg.id],
+                                  }))
+                                }
+                              >
+                                <span>Detail 3-Layer RAG</span>
+                                {isTelemetryOpen ? (
+                                  <ChevronUp size={13} />
+                                ) : (
+                                  <ChevronDown size={13} />
+                                )}
+                              </button>
+                            )}
                           </div>
 
                           {isTelemetryOpen && (
+                          {!isConversational && isTelemetryOpen && (
                             <div className="telemetry-inline-panel">
                               <div>
                                 <strong>Ekspansi ID → AR:</strong> {expansionText}
