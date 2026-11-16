@@ -11,10 +11,10 @@
   "scripts": {
     "build:web": "bun run -b --cwd apps/web build",
     "dev:web": "bun run -b --cwd apps/web dev",
-    "dev:ui": "PYTHONPATH=packages/schema:packages/normalizer:packages/parsers:packages/rag-engine .venv/bin/python apps/api/server.py --port 8765",
-    "rag:index": "PYTHONPATH=packages/schema:packages/normalizer:packages/parsers:packages/rag-engine .venv/bin/python -m jamiyyah_rag.indexer --init-db",
-    "rag:index:all": "PYTHONPATH=packages/schema:packages/normalizer:packages/parsers:packages/rag-engine .venv/bin/python -m jamiyyah_rag.indexer --init-db --include-hadith",
-    "test:py": "PYTHONPATH=packages/schema:packages/normalizer:packages/parsers:packages/rag-engine sh -c 'for dir in packages/*/tests; do python3 -m unittest discover -s \"$dir\" -p \"test_*.py\" -v || exit 1; done'",
-    "validate:samples": "PYTHONPATH=packages/schema python3 -m jamiyyah_schema datasets/samples/canonical_sample.jsonl"
+    "dev:ui": "node scripts/run-py.mjs apps/api/server.py --port 8765",
+    "rag:index": "node scripts/run-py.mjs -m jamiyyah_rag.indexer --init-db",
+    "rag:index:all": "node scripts/run-py.mjs -m jamiyyah_rag.indexer --init-db --include-hadith",
+    "test:py": "node scripts/run-py.mjs --test",
+    "validate:samples": "node scripts/run-py.mjs -m jamiyyah_schema datasets/samples/canonical_sample.jsonl"
   }
 }

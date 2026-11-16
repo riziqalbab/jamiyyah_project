@@ -21,6 +21,7 @@ from jamiyyah_rag import (
     reciprocal_rank_fusion,
     validate_citations,
 )
+from jamiyyah_rag.openai_compat import OpenAICompatError, _is_retryable_http_error
 from typing_extensions import Self
 
 
@@ -257,6 +258,80 @@ class TestRagEngine(unittest.TestCase):
             st2 = index_jsonl_files([jsonl], store=store, embed_client=embed_client, model="m")
             self.assertEqual(st2.embedded, 0)
             self.assertEqual(st2.skipped_unchanged, 1)
+
+    def test_pipelined_indexer_batches_and_config_defaults(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            root = Path(tmp)
+            cfg = RagSettings.from_env(root)
+            self.assertEqual(cfg.embedding_batch_size, 64)
+            self.assertEqual(cfg.embedding_concurrency, 2)
+
+            jsonl = root / "multi.jsonl"
+            lines = []
+            for i in range(5):
+                lines.append(
+                    json.dumps(
+                        {
+                            "chunk_id": f"c_{i}",
+                            "doc_id": "d1",
+                            "source_category": "kitab_turats",
+                            "hierarchy": ["Taqrib"],
+                            "content": {"embedding_text": f"Teks {i}"},
+                            "metadata": {"verification_status": "pending"},
+                        }
+                    )
+                )
+            jsonl.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            batch_sizes: list[int] = []
+
+            def fake_transport(_u: str, p: dict[str, Any], _h: dict[str, str], _t: float) -> dict[str, Any]:
+                batch_sizes.append(len(p["input"]))
+                return {
+                    "data": [{"index": i, "embedding": [float(i + 1), 0.0]} for i, _ in enumerate(p["input"])]
+                }
+
+            store = SqliteVectorStore(root / "vec.sqlite")
+            embed_client = OpenAICompatClient("http://localhost:11434/v1", transport=fake_transport)
+            stats = index_jsonl_files(
+                [jsonl],
+                store=store,
+                embed_client=embed_client,
+                model="m",
+                batch_size=2,
+                concurrency=2,
+            )
+            self.assertEqual(stats.scanned, 5)
+            self.assertEqual(stats.embedded, 5)
+            self.assertEqual(sorted(batch_sizes), [1, 2, 2])
+
+    def test_embed_bisects_batch_on_transient_error(self) -> None:
+        calls: list[list[str]] = []
+
+        def flaky_transport(
+            _u: str, p: dict[str, Any], _h: dict[str, str], _t: float
+        ) -> dict[str, Any]:
+            inputs = list(p["input"])
+            calls.append(inputs)
+            if len(inputs) > 2:
+                raise OpenAICompatError("HTTP 400: do embedding request: wsarecv: forcibly closed")
+            return {
+                "data": [
+                    {"index": i, "embedding": [float(len(t)), 1.0]}
+                    for i, t in enumerate(inputs)
+                ]
+            }
+
+        client = OpenAICompatClient("http://localhost:11434/v1", transport=flaky_transport)
+        vecs = client.embed(["a", "bb", "ccc", "dddd"], model="m")
+        self.assertEqual(vecs, [[1.0, 1.0], [2.0, 1.0], [3.0, 1.0], [4.0, 1.0]])
+        self.assertEqual(calls, [["a", "bb", "ccc", "dddd"], ["a", "bb"], ["ccc", "dddd"]])
+
+    def test_retryable_ollama_http_error_detection(self) -> None:
+        self.assertTrue(_is_retryable_http_error(400, '{"error":{"message":"health resp: connection refused"}}'))
+        self.assertTrue(_is_retryable_http_error(400, '{"error":{"message":"do embedding request: wsarecv: An existing connection was forcibly closed"}}'))
+        self.assertTrue(_is_retryable_http_error(503, "unavailable"))
+        self.assertFalse(_is_retryable_http_error(400, '{"error":{"message":"model not found"}}'))
 
 
 if __name__ == "__main__":
