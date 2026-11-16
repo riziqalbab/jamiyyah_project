@@ -305,7 +305,6 @@ export function ChatWorkspace({
                           <div className="assistant-meta-bar">
                             <span
                               className={`status-pill ${
-                                res.status === "answered" ? "answered" : "tawaqquf"
                                 isConversational
                                   ? "conversational"
                                   : res.status === "answered"
@@ -313,7 +312,6 @@ export function ChatWorkspace({
                                   : "tawaqquf"
                               }`}
                             >
-                              {res.status === "answered" ? (
                               {isConversational ? (
                                 <>
                                   <MessageCircle size={13} /> Percakapan ·{" "}
@@ -337,23 +335,6 @@ export function ChatWorkspace({
                               )}
                             </span>
 
-                            <button
-                              type="button"
-                              className="telemetry-toggle-btn"
-                              onClick={() =>
-                                setExpandedTelemetry((prev) => ({
-                                  ...prev,
-                                  [msg.id]: !prev[msg.id],
-                                }))
-                              }
-                            >
-                              <span>Detail 3-Layer RAG</span>
-                              {isTelemetryOpen ? (
-                                <ChevronUp size={13} />
-                              ) : (
-                                <ChevronDown size={13} />
-                              )}
-                            </button>
                             {!isConversational && (
                               <button
                                 type="button"
@@ -375,7 +356,6 @@ export function ChatWorkspace({
                             )}
                           </div>
 
-                          {isTelemetryOpen && (
                           {!isConversational && isTelemetryOpen && (
                             <div className="telemetry-inline-panel">
                               <div>

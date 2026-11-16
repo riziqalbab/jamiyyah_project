@@ -101,7 +101,6 @@ export interface AskResponse {
   expansion: QueryExpansion;
   retrieval_mode?: string;
   rag_mode?: string;
-  llm_model?: string;
   llm_model?: string | null;
   llm_error?: string | null;
   threshold: number;

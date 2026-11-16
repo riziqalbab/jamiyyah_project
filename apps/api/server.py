@@ -32,7 +32,6 @@ from jamiyyah_rag.indexer import (
 )
 from jamiyyah_rag.openai_compat import OpenAICompatClient, OpenAICompatError
 from jamiyyah_rag.pgvector_store import PgVectorStore, VectorStore
-from jamiyyah_rag.pipeline import expand_query_with_llm, generate_strict_grounded_answer
 from jamiyyah_rag.pipeline import (
     contextualize_and_expand_query,
     contextualize_query_fallback,
@@ -738,7 +737,6 @@ def run_grounded_qa(
     category: str | None = None,
     history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Execute the 3-Layer RAG Guardrails pipeline over local parsed corpora."""
     """Execute conversational bypass or 3-Layer RAG Guardrails with chat history."""
     clean_history = normalize_chat_history(history)
 
@@ -782,7 +780,6 @@ def run_grounded_qa(
 
     extra_ar_terms: list[str] = []
     if corpus.llm_client is not None:
-        extra_ar_terms = expand_query_with_llm(
         effective_query, extra_ar_terms = contextualize_and_expand_query(
             query,
             corpus.llm_client,
@@ -793,7 +790,6 @@ def run_grounded_qa(
         effective_query = contextualize_query_fallback(query, clean_history)
 
     search_res = corpus.search(
-        query=query,
         query=effective_query,
         category=category,
         limit=6,
@@ -1037,7 +1033,6 @@ def make_handler(corpus: CorpusIndex, web_dir: Path) -> type[BaseHTTPRequestHand
 
             min_score = float(body.get("min_score", 0.65))
             category = body.get("category") or None
-            result = run_grounded_qa(corpus, query=query, min_score=min_score, category=category)
             raw_history = body.get("history")
             history = raw_history if isinstance(raw_history, list) else None
             result = run_grounded_qa(
