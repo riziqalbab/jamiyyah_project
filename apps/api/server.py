@@ -258,6 +258,8 @@ class CorpusIndex:
                     store=self.vector_store,
                     embed_client=self.embed_client,
                     model=self.settings.embedding_model,
+                    batch_size=self.settings.embedding_batch_size,
+                    concurrency=self.settings.embedding_concurrency,
                     progress_callback=_on_progress,
                 )
                 with self._index_lock:

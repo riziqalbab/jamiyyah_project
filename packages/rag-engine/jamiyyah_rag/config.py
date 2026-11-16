@@ -46,6 +46,8 @@ class RagSettings:
     min_reranker_score: float = 0.65
     vector_db_path: Path = Path("qdrant_storage/vectors.sqlite")
     request_timeout_sec: float = 30.0
+    embedding_batch_size: int = 64
+    embedding_concurrency: int = 2
 
     @property
     def has_llm_credentials(self) -> bool:
@@ -73,6 +75,16 @@ class RagSettings:
         except ValueError:
             min_score = 0.65
 
+        try:
+            batch_size = max(1, int(get("EMBEDDING_BATCH_SIZE", "64")))
+        except ValueError:
+            batch_size = 64
+
+        try:
+            concurrency = max(1, int(get("EMBEDDING_CONCURRENCY", "2")))
+        except ValueError:
+            concurrency = 2
+
         return cls(
             database_url=get(
                 "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/jamiyyah"
@@ -87,4 +99,6 @@ class RagSettings:
             llm_api_key=get("LLM_API_KEY", ""),
             min_reranker_score=min_score,
             vector_db_path=db_path,
+            embedding_batch_size=batch_size,
+            embedding_concurrency=concurrency,
         )

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextlib import contextmanager
+import threading
 from typing import Any, Protocol
 
 import psycopg
@@ -54,13 +56,33 @@ class PgVectorStore:
         self.database_url = database_url
         self.table_name = _validate_identifier(table_name)
         self._connect_fn = connect_fn
+        self._conn_lock = threading.Lock()
+        self._conn: Any = None
 
-    def _connect(self) -> Any:
+    @contextmanager
+    def _connect(self) -> Iterator[Any]:
         if self._connect_fn is not None:
-            return self._connect_fn(self.database_url)
-        conn = psycopg.connect(self.database_url)
-        register_vector(conn)
-        return conn
+            with self._connect_fn(self.database_url) as conn:
+                yield conn
+            return
+
+        with self._conn_lock:
+            if self._conn is None or getattr(self._conn, "closed", False):
+                conn = psycopg.connect(self.database_url)
+                register_vector(conn)
+                self._conn = conn
+            try:
+                yield self._conn
+            except psycopg.Error:
+                try:
+                    self._conn.rollback()
+                except psycopg.Error:
+                    try:
+                        self._conn.close()
+                    except psycopg.Error:
+                        pass
+                    self._conn = None
+                raise
 
     def ensure_schema(self) -> None:
         """Create the ``vector`` extension and embeddings table if missing."""
